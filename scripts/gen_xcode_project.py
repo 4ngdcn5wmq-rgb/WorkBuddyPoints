@@ -164,7 +164,9 @@ def gen_pbxproj(swift_files: list[str], special_files: list[str], has_assets: bo
         return children
 
     lines.append("/* Begin PBXGroup section */")
-    for folder in sorted(folders, key=len, reverse=True):
+    # 按目录深度从深到浅、同深度按字典序输出 —— 保证每次生成的 ID 分配完全一致
+    # （避免 set 迭代顺序受 PYTHONHASHSEED 影响导致产物不确定）
+    for folder in sorted(folders, key=lambda f: (-len(f.split("/")) if f else 99, f)):
         name = folder.split("/")[-1] if folder else PROJECT_NAME
         children = group_children(folder)
         body = ", ".join(children)
@@ -314,7 +316,8 @@ def gen_pbxproj(swift_files: list[str], special_files: list[str], has_assets: bo
             "ENABLE_PREVIEWS = YES;",
             "GENERATE_INFOPLIST_FILE = NO;",
             "INFOPLIST_FILE = " + PROJECT_NAME + "/Info.plist;",
-            "INFOPLIST_KEY_CFBundleDisplayName = 积分助手;",
+            # 注意：pbxproj 里非 ASCII 值必须加引号，否则 Apple 的解析器会拒收
+            'INFOPLIST_KEY_CFBundleDisplayName = "积分助手";',
             "INFOPLIST_KEY_UILaunchScreen_Generation = YES;",
             "IPHONEOS_DEPLOYMENT_TARGET = " + DEPLOYMENT_TARGET + ";",
             "LD_RUNPATH_SEARCH_PATHS = (\"$(inherited)\", \"@executable_path/Frameworks\");",
@@ -386,23 +389,57 @@ def gen_pbxproj(swift_files: list[str], special_files: list[str], has_assets: bo
 
 
 def validate(content: str) -> None:
-    """结构自校验：大括号配平、对象 ID 引用闭合、必要 section 存在"""
+    """结构自校验：产出不合法就当场失败，绝不让空/截断的文件流到下一步。
+
+    校验项：
+      1. 必须以 // !$*UTF8*$! 开头（pbxproj 的强制文件头）
+      2. 必须以 } 结尾（防止上传/写入截断）
+      3. 必须含 objects 段与 rootObject
+      4. 大括号配平
+      5. 对象定义数（isa = 出现次数）与对象收尾数（\\n\\t}; ）一致
+      6. 若环境里有 openstep_parser，用真实 OpenStep 解析器做终极校验
+    """
+    def fail(reason: str) -> None:
+        raise SystemExit(f"校验失败：{reason}\n"
+                         f"（常见原因：scripts/gen_xcode_project.py 上传时不完整，"
+                         f"请重新完整上传该文件）")
+
+    if not content.startswith("// !$*UTF8*$!"):
+        fail("文件头不是 // !$*UTF8*$!，内容为空或已损坏")
+    if not content.rstrip("\n").endswith("}"):
+        fail("文件未以 } 结尾，内容可能被截断")
+    if "objects = {" not in content:
+        fail("缺少 objects 段")
+    if "rootObject = " not in content:
+        fail("缺少 rootObject")
     if content.count("{") != content.count("}"):
-        raise SystemExit("校验失败：大括号不配平")
-    defined = set(re.findall(r"^\t\t([0-9A-F]{24}) ", content, re.M))
-    if not defined:
-        raise SystemExit("校验失败：没有解析到对象 ID")
-    referenced = set(re.findall(r"\b([0-9A-F]{24})\b", content)) - defined
-    referenced.add(re.search(r"rootObject = ([0-9A-F]{24})", content).group(1))
-    missing = referenced - defined
+        fail(f"大括号不配平（{{ x{content.count('{')} vs }} x{content.count('}')}）")
+    object_count = content.count("isa = ")
+    # 每个对象都由「\\t\\t + 24位十六进制ID + 空格」开头定义，二者数量必须一致
+    defined = re.findall(r"^\t\t[0-9A-F]{24} ", content, re.M)
+    if object_count == 0 or object_count != len(defined):
+        fail(f"对象定义({object_count})与对象声明行({len(defined)})数量不一致")
+    # 所有被引用的 ID 都必须有定义（引用闭合）
+    referenced = set(re.findall(r"\b[0-9A-F]{24}\b", content)) - set(defined)
+    root = re.search(r"rootObject = ([0-9A-F]{24})", content)
+    if not root:
+        fail("rootObject 行格式异常")
+    referenced.add(root.group(1))
+    missing = referenced - set(i.strip() for i in defined)
     if missing:
-        raise SystemExit(f"校验失败：存在未定义的对象 ID {sorted(missing)}")
+        fail(f"存在未定义的对象 ID {sorted(missing)}")
     for section in ("PBXBuildFile", "PBXFileReference", "PBXGroup", "PBXNativeTarget",
                     "PBXProject", "PBXResourcesBuildPhase", "PBXSourcesBuildPhase",
                     "PBXFrameworksBuildPhase", "XCBuildConfiguration", "XCConfigurationList"):
         if f"/* Begin {section} section */" not in content:
-            raise SystemExit(f"校验失败：缺少 section {section}")
-    print(f"校验通过：{len(defined)} 个对象，引用全部闭合")
+            fail(f"缺少 section {section}")
+    try:
+        from openstep_parser import OpenStepDecoder  # type: ignore
+        OpenStepDecoder.ParseFromString(content)
+        print(f"OpenStep 解析校验通过")
+    except ImportError:
+        print("（未安装 openstep_parser，跳过终极解析校验）")
+    print(f"校验通过：{object_count} 个对象，引用全部闭合")
 
 
 def main() -> None:

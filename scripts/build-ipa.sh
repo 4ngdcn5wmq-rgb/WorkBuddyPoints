@@ -17,6 +17,23 @@ if [ ! -d "$PROJECT" ]; then
   python3 scripts/gen_xcode_project.py
 fi
 
+# 开工前先确认工程文件是完整的，避免带着坏文件跑几分钟才发现
+PBXPROJ="$PROJECT/project.pbxproj"
+if [ ! -s "$PBXPROJ" ]; then
+  echo "!! $PBXPROJ 不存在或为空 —— scripts/gen_xcode_project.py 可能上传不完整，"
+  echo "!! 请重新完整上传该文件后重试"
+  exit 1
+fi
+if ! head -n 1 "$PBXPROJ" | grep -q 'UTF8'; then
+  echo "!! $PBXPROJ 文件头异常（应为 // !\$*UTF8*\$!），文件可能已损坏"
+  exit 1
+fi
+if ! tail -c 2 "$PBXPROJ" | grep -q '}'; then
+  echo "!! $PBXPROJ 未以 } 结尾，文件可能被截断"
+  exit 1
+fi
+echo "==> 工程文件完好：$(wc -l < "$PBXPROJ" | tr -d ' ') 行"
+
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 

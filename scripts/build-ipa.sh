@@ -33,6 +33,11 @@ if ! tail -c 2 "$PBXPROJ" | grep -q '}'; then
   exit 1
 fi
 echo "==> 工程文件完好：$(wc -l < "$PBXPROJ" | tr -d ' ') 行"
+echo "---- 工程文件头 3 行 ----"
+head -n 3 "$PBXPROJ"
+echo "---- 工程文件尾 3 行 ----"
+tail -n 3 "$PBXPROJ"
+echo "-----------------------"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"

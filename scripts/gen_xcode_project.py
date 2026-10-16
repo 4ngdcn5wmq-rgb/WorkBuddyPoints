@@ -385,7 +385,9 @@ def gen_pbxproj(swift_files: list[str], special_files: list[str], has_assets: bo
 \trootObject = {project} /* Project object */;
 }}
 """
-    return header + objects + footer
+    # 注意：objects 段最后一行是 section 注释，必须补换行，
+    # 否则闭合 objects 字典的 "\t};" 会粘到注释同一行，Xcode 会判工程文件损坏。
+    return header + objects + "\n" + footer
 
 
 def validate(content: str) -> None:
@@ -433,6 +435,16 @@ def validate(content: str) -> None:
                     "PBXFrameworksBuildPhase", "XCBuildConfiguration", "XCConfigurationList"):
         if f"/* Begin {section} section */" not in content:
             fail(f"缺少 section {section}")
+    # Apple 的工程文件解析器要求：整行注释后面只能跟空白或行尾。
+    # "*/\t};" 这种「闭合括号粘在注释后」会让 Xcode 判整个工程文件损坏。
+    # （标准格式 "ID /* 注释 */ = {...}" 的注释在行中间，属于合法，不在此列。）
+    for lineno, line in enumerate(content.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped.startswith("/*"):
+            continue
+        idx = stripped.find("*/")
+        if idx >= 0 and stripped[idx + 2:].strip():
+            fail(f"第 {lineno} 行注释后跟了非空白内容：{stripped[:60]}")
     try:
         from openstep_parser import OpenStepDecoder  # type: ignore
         OpenStepDecoder.ParseFromString(content)

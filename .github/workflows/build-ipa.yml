@@ -1,0 +1,88 @@
+name: Build Unsigned IPA
+
+# 用 GitHub 提供的 macOS 云编译机产出「未签名 IPA」：
+# 拿到后用自签软件（AltStore / Sideloadly / 爱思助手 / iOS App Signer 等）签名安装即可。
+#
+# 触发方式：
+#   1) Actions 页面手动点 Run workflow（推荐，随时可跑）
+#   2) 推送 tag（git tag v1.0.0 && git push --tags，会同时挂到 Release）
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: "构建配置"
+        required: false
+        default: Release
+        type: choice
+        options:
+          - Release
+          - Debug
+      commit_ipa:
+        description: "把 IPA 提交回仓库（便于直接下载，不用去 Artifacts 页面找）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 编译未签名 IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcodebuild -version
+          sw_vers
+
+      - name: 生成 Xcode 工程
+        run: python3 scripts/gen_xcode_project.py
+
+      - name: 编译并打包 IPA
+        env:
+          CONFIGURATION: ${{ github.event.inputs.configuration || 'Release' }}
+        run: bash scripts/build-ipa.sh
+
+      - name: 上传 IPA 产物（Actions 页面可直接下载，保留 90 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorkBuddyPoints-unsigned-ipa
+          path: build/*.ipa
+          if-no-files-found: error
+
+      - name: 把 IPA 提交回仓库 ipa/ 目录（可选）
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_ipa == 'true' }}
+        run: |
+          mkdir -p ipa
+          cp build/*.ipa ipa/
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ipa
+          if git diff --cached --quiet; then
+            echo "IPA 无变化，跳过提交"
+          else
+            git commit -m "CI: 更新未签名 IPA（${{ github.run_number }}）"
+            git push
+          fi
+
+      - name: 发布到 Release（仅 tag 推送时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*.ipa
+          name: ${{ github.ref_name }} 未签名 IPA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

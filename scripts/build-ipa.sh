@@ -12,10 +12,10 @@ BUILD_DIR="build"
 ARCHIVE_PATH="$BUILD_DIR/WorkBuddyPoints.xcarchive"
 IPA_NAME="WorkBuddyPoints-unsigned.ipa"
 
-if [ ! -d "$PROJECT" ]; then
-  echo "==> 未找到 $PROJECT，先生成工程"
-  python3 scripts/gen_xcode_project.py
-fi
+# 每次都重新生成工程：生成器是确定性的，这样即使仓库里残留旧/坏的
+# .xcodeproj（比如早期手动上传的），也绝不会被带进构建。
+echo "==> 重新生成 Xcode 工程（确定性重建）"
+python3 scripts/gen_xcode_project.py
 
 # 开工前先确认工程文件是完整的，避免带着坏文件跑几分钟才发现
 PBXPROJ="$PROJECT/project.pbxproj"

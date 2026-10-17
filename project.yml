@@ -1,0 +1,60 @@
+# XcodeGen 工程描述 —— 由它生成 WorkBuddyPoints.xcodeproj（业界标准做法）。
+# 相比手写 project.pbxproj，xcodegen 产出的工程格式与 Xcode 完全一致，
+# 不会出现 "Unable to read project ... parse error" 一类的解析问题。
+# 用法：xcodegen generate （CI 的 build-ipa.sh 会自动调用）
+
+name: WorkBuddyPoints
+options:
+  bundleIdPrefix: com.wbpoints
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+
+targets:
+  WorkBuddyPoints:
+    type: application
+    platform: iOS
+    sources:
+      - path: WorkBuddyPoints
+        excludes:
+          - "Info.plist"
+          - "WorkBuddyPoints.entitlements"
+          - "scripts"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wbpoints.daily
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: WorkBuddyPoints/Info.plist
+        CODE_SIGN_ENTITLEMENTS: WorkBuddyPoints/WorkBuddyPoints.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        SWIFT_STRICT_CONCURRENCY: minimal
+        ENABLE_PREVIEWS: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+
+schemes:
+  WorkBuddyPoints:
+    build:
+      targets:
+        WorkBuddyPoints: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

@@ -12,10 +12,17 @@ BUILD_DIR="build"
 ARCHIVE_PATH="$BUILD_DIR/WorkBuddyPoints.xcarchive"
 IPA_NAME="WorkBuddyPoints-unsigned.ipa"
 
-# 每次都重新生成工程：生成器是确定性的，这样即使仓库里残留旧/坏的
-# .xcodeproj（比如早期手动上传的），也绝不会被带进构建。
-echo "==> 重新生成 Xcode 工程（确定性重建）"
-python3 scripts/gen_xcode_project.py
+# 每次都重新生成工程：即使仓库里残留旧/坏的 .xcodeproj，也绝不会被带进构建。
+# 首选 XcodeGen（业界标准工具，产物与 Xcode 手建工程完全一致，彻底避免
+# 手写 pbxproj 的解析兼容问题）；没有 xcodegen 时回退到自带 Python 生成器。
+echo "==> 生成 Xcode 工程"
+if command -v xcodegen >/dev/null 2>&1; then
+  echo "==> 使用 XcodeGen 生成工程"
+  xcodegen generate
+else
+  echo "!! 未找到 xcodegen（workflow 应先 brew install xcodegen），回退 Python 生成器"
+  python3 scripts/gen_xcode_project.py
+fi
 
 # 开工前先确认工程文件是完整的，避免带着坏文件跑几分钟才发现
 PBXPROJ="$PROJECT/project.pbxproj"

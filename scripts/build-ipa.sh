@@ -13,33 +13,33 @@ ARCHIVE_PATH="$BUILD_DIR/WorkBuddyPoints.xcarchive"
 IPA_NAME="WorkBuddyPoints-unsigned.ipa"
 
 # 每次都重新生成工程：即使仓库里残留旧/坏的 .xcodeproj，也绝不会被带进构建。
-# 首选 XcodeGen（业界标准工具，产物与 Xcode 手建工程完全一致，彻底避免
-# 手写 pbxproj 的解析兼容问题）；没有 xcodegen 时回退到自带 Python 生成器。
+# 首选 XcodeGen（业界标准工具，产物与 Xcode 手建工程完全一致）；
+# 没有 xcodegen 就当场用 brew 装（不依赖 workflow 是否记得装）；
+# brew 也拿不到（环境异常）时回退自带 Python 生成器（产出 XML plist 格式 pbxproj）。
 echo "==> 生成 Xcode 工程"
 if command -v xcodegen >/dev/null 2>&1; then
   echo "==> 使用 XcodeGen 生成工程"
   xcodegen generate
+elif command -v brew >/dev/null 2>&1; then
+  echo "==> 未找到 xcodegen，尝试 brew install xcodegen（约 1 分钟）"
+  if brew install xcodegen; then
+    xcodegen generate
+  else
+    echo "!! brew install xcodegen 失败，回退 Python 生成器（XML plist 格式 pbxproj）"
+    python3 scripts/gen_xcode_project.py
+  fi
 else
-  echo "!! 未找到 xcodegen（workflow 应先 brew install xcodegen），回退 Python 生成器"
+  echo "!! 环境无 brew，回退 Python 生成器（XML plist 格式 pbxproj）"
   python3 scripts/gen_xcode_project.py
 fi
 
-# 开工前先确认工程文件是完整的，避免带着坏文件跑几分钟才发现
+# 开工前先确认工程文件存在且非空，避免带着坏文件跑几分钟才发现
 PBXPROJ="$PROJECT/project.pbxproj"
 if [ ! -s "$PBXPROJ" ]; then
-  echo "!! $PBXPROJ 不存在或为空 —— scripts/gen_xcode_project.py 可能上传不完整，"
-  echo "!! 请重新完整上传该文件后重试"
+  echo "!! $PBXPROJ 不存在或为空 —— 工程生成失败，请向上查看日志"
   exit 1
 fi
-if ! head -n 1 "$PBXPROJ" | grep -q 'UTF8'; then
-  echo "!! $PBXPROJ 文件头异常（应为 // !\$*UTF8*\$!），文件可能已损坏"
-  exit 1
-fi
-if ! tail -c 2 "$PBXPROJ" | grep -q '}'; then
-  echo "!! $PBXPROJ 未以 } 结尾，文件可能被截断"
-  exit 1
-fi
-echo "==> 工程文件完好：$(wc -l < "$PBXPROJ" | tr -d ' ') 行"
+echo "==> 工程文件已生成：$(wc -l < "$PBXPROJ" | tr -d ' ') 行"
 echo "---- 工程文件头 3 行 ----"
 head -n 3 "$PBXPROJ"
 echo "---- 工程文件尾 3 行 ----"
@@ -62,26 +62,17 @@ done
 echo "==> 工程包完整：pbxproj + workspace + scheme 三件套齐全"
 
 # plutil 诊断（仅提示，不作为门槛）：
-#   - pbxproj 首行 "// !$*UTF8*$!" 是 Xcode 的专属约定，CoreFoundation 老式解析器
-#     不认 "//" 行注释 —— 必须剥掉首行再校验，否则误报 "Unexpected character / at line 1"。
-#   - workspace / scheme 是 XML plist，可直接校验。
+#   - pbxproj 为 XML plist 格式，plutil 可直接校验，结果可信；
+#   - workspace(.xcworkspacedata) / scheme(.xcscheme) 不是 plist，
+#     是各自的 DTD 文档，plutil 必然"报可疑"，不要对它们做 plutil 检查；
 #   - 真正的门槛是下面的 xcodebuild -list：它用的就是 Xcode 自己的工程加载器。
 if command -v plutil >/dev/null 2>&1; then
-  PBX_TMP="$(mktemp)"
-  tail -n +2 "$PBXPROJ" > "$PBX_TMP"
-  if plutil -lint "$PBX_TMP" >/dev/null 2>&1; then
-    echo "==> plutil 校验通过：pbxproj 语法合法（OpenStep plist）"
+  if plutil -lint "$PBXPROJ" >/dev/null 2>&1; then
+    echo "==> plutil 校验通过：pbxproj（XML plist）语法合法"
   else
-    echo "!! plutil 提示 pbxproj 语法可疑（不阻断，仅供参考；报告行号 +1 = 真实行号）："
-    plutil -lint "$PBX_TMP" || true
+    echo "!! plutil 提示 pbxproj 语法可疑（不阻断，仅供参考）："
+    plutil -lint "$PBXPROJ" || true
   fi
-  rm -f "$PBX_TMP"
-  for f in "$PROJECT/project.xcworkspace/contents.xcworkspacedata" "$PROJECT/xcshareddata/xcschemes/$SCHEME.xcscheme"; do
-    if ! plutil -lint "$f" >/dev/null 2>&1; then
-      echo "!! plutil 提示 $f 语法可疑（不阻断，仅供参考）："
-      plutil -lint "$f" || true
-    fi
-  done
 else
   echo "（环境无 plutil，跳过 macOS 原生校验）"
 fi

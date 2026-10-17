@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""生成 WorkBuddyPoints.xcodeproj/project.pbxproj（不依赖 XcodeGen / macOS）。
+"""生成完整的 WorkBuddyPoints.xcodeproj 工程包（不依赖 XcodeGen / macOS）。
+
+产出三件套（缺任何一件，xcodebuild 都会判工程损坏、拒绝读取）：
+    - project.pbxproj                                工程主体
+    - project.xcworkspace/contents.xcworkspacedata    -project 构建的必需文件
+    - xcshareddata/xcschemes/<name>.xcscheme          让 -scheme 无需依赖自动创建
 
 用法：
     python3 scripts/gen_xcode_project.py            # 生成工程
@@ -28,6 +33,104 @@ SRC_DIR = os.path.join(ROOT, PROJECT_NAME)
 SRC_DIR_NAME = PROJECT_NAME
 PROJECT_DIR = os.path.join(ROOT, PROJECT_NAME + ".xcodeproj")
 PBXPROJ = os.path.join(PROJECT_DIR, "project.pbxproj")
+
+# .xcodeproj 本质是目录 bundle。Xcode 生成的工程除 project.pbxproj 外还一定带
+# 下面两个文件；手写工程若只产 pbxproj，xcodebuild -project 会直接报
+# "Unable to read project ... damaged ... parse error"（读不到 workspace 文件）。
+WORKSPACE_PATH = os.path.join(PROJECT_DIR, "project.xcworkspace", "contents.xcworkspacedata")
+SCHEME_PATH = os.path.join(PROJECT_DIR, "xcshareddata", "xcschemes", PROJECT_NAME + ".xcscheme")
+
+# 工程内置 workspace：self: 指向 .xcodeproj 自身（Xcode 自己也是这么写的）
+WORKSPACE_DATA = """<?xml version="1.0" encoding="UTF-8"?>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "self:%s.xcodeproj">
+   </FileRef>
+</Workspace>
+""" % PROJECT_NAME
+
+# 共享 scheme：-scheme 参数直接可用，不依赖 xcodebuild 自动创建
+SCHEME_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "1600"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES"
+      buildArchitectures = "Prefer Architecture with fewest variants">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "%(target)s"
+               BuildableName = "%(name)s.app"
+               BlueprintName = "%(name)s"
+               ReferencedContainer = "container:%(name)s.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES">
+      <Testables>
+      </Testables>
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersion = "1"
+      debugServiceVersion = "1"
+      allowLocationSimulation = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "%(target)s"
+            BuildableName = "%(name)s.app"
+            BlueprintName = "%(name)s"
+            ReferencedContainer = "container:%(name)s.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction
+      buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO"
+      debugDocumentVersion = "1">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "%(target)s"
+            BuildableName = "%(name)s.app"
+            BlueprintName = "%(name)s"
+            ReferencedContainer = "container:%(name)s.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction
+      buildConfiguration = "Debug">
+   </AnalyzeAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+</Scheme>
+"""
 
 
 class IDs:
@@ -387,7 +490,8 @@ def gen_pbxproj(swift_files: list[str], special_files: list[str], has_assets: bo
 """
     # 注意：objects 段最后一行是 section 注释，必须补换行，
     # 否则闭合 objects 字典的 "\t};" 会粘到注释同一行，Xcode 会判工程文件损坏。
-    return header + objects + "\n" + footer
+    # 同时返回 target 对象 ID —— 写 scheme 文件时要用它做 BlueprintIdentifier。
+    return header + objects + "\n" + footer, target
 
 
 def validate(content: str) -> None:
@@ -465,7 +569,7 @@ def main() -> None:
     if not swift_files:
         raise SystemExit(f"未在 {SRC_DIR} 找到任何 Swift 源文件")
 
-    content = gen_pbxproj(swift_files, special_files, has_assets)
+    content, target_id = gen_pbxproj(swift_files, special_files, has_assets)
     validate(content)
     os.makedirs(PROJECT_DIR, exist_ok=True)
     with open(PBXPROJ, "w", encoding="utf-8", newline="\n") as handle:
@@ -474,6 +578,17 @@ def main() -> None:
     print(f"  Swift 源文件：{len(swift_files)} 个")
     print(f"  特殊文件：{', '.join(special_files) or '无'}")
     print(f"  Assets.xcassets：{'包含' if has_assets else '缺失'}")
+
+    # .xcodeproj 是 bundle：除 pbxproj 外，内置 workspace 与共享 scheme
+    # 同样是 xcodebuild 的必需项，缺一个整个工程就读不进来。
+    os.makedirs(os.path.dirname(WORKSPACE_PATH), exist_ok=True)
+    with open(WORKSPACE_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(WORKSPACE_DATA)
+    os.makedirs(os.path.dirname(SCHEME_PATH), exist_ok=True)
+    with open(SCHEME_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(SCHEME_TEMPLATE % {"target": target_id, "name": PROJECT_NAME})
+    print("已生成 project.xcworkspace/contents.xcworkspacedata（xcodebuild -project 必需）")
+    print(f"已生成 xcshareddata/xcschemes/{PROJECT_NAME}.xcscheme（-scheme 直接可用）")
 
 
 if __name__ == "__main__":

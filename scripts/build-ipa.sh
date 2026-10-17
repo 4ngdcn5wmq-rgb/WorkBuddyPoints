@@ -39,6 +39,42 @@ echo "---- 工程文件尾 3 行 ----"
 tail -n 3 "$PBXPROJ"
 echo "-----------------------"
 
+# .xcodeproj 是 bundle：除 pbxproj 外，内置 workspace 和共享 scheme 也是
+# xcodebuild -project 的必需项，缺一个就报 "Unable to read project"。
+BUNDLE_FILES=(
+  "$PROJECT/project.pbxproj"
+  "$PROJECT/project.xcworkspace/contents.xcworkspacedata"
+  "$PROJECT/xcshareddata/xcschemes/$SCHEME.xcscheme"
+)
+for f in "${BUNDLE_FILES[@]}"; do
+  if [ ! -s "$f" ]; then
+    echo "!! 工程包缺少 $f —— 请确认 scripts/gen_xcode_project.py 是完整的最新版"
+    exit 1
+  fi
+done
+echo "==> 工程包完整：pbxproj + workspace + scheme 三件套齐全"
+
+# 用 macOS 自带的 plutil 做终极语法校验（比任何自制校验都权威，报错带精确行号）
+if command -v plutil >/dev/null 2>&1; then
+  for f in "${BUNDLE_FILES[@]}"; do
+    if ! plutil -lint "$f"; then
+      echo "!! plutil 判定 $f 语法非法（详见上行输出）"
+      exit 1
+    fi
+  done
+  echo "==> plutil 校验通过：工程包三个文件语法全部合法"
+else
+  echo "（环境无 plutil，跳过 macOS 原生校验）"
+fi
+
+# 快速预检：确认 xcodebuild 能真正读进工程、scheme 可见。
+# 工程包缺文件时这里几秒内就会报错，不用等编译跑几分钟才失败。
+echo "==> 预检工程可读性（xcodebuild -list）"
+xcodebuild -list -project "$PROJECT" || {
+  echo "!! xcodebuild 无法读取工程（详见上行输出）"
+  exit 1
+}
+
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
